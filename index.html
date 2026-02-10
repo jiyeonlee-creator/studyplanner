@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Calendar, CheckCircle, Circle, BookOpen, Coffee, Award, ChevronLeft, ChevronRight, AlertCircle, TrendingUp, List, PieChart, CheckSquare, XSquare } from 'lucide-react';
+import { Calendar, CheckCircle, Circle, BookOpen, Coffee, Award, ChevronLeft, ChevronRight, AlertCircle, TrendingUp, List, PieChart, CheckSquare, XSquare, Cloud, Save } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
+
+// --- Firebase Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 const StudyPlanner = () => {
   // --- State Management ---
@@ -8,14 +18,43 @@ const StudyPlanner = () => {
   const [viewMonth, setViewMonth] = useState(new Date(2026, 1, 1)); 
   const [activeTab, setActiveTab] = useState('calendar'); // 'calendar' or 'dashboard'
   const [tasks, setTasks] = useState({}); // Stores all todo items keyed by date
+  const [user, setUser] = useState(null); // Auth state
+  const [isSaving, setIsSaving] = useState(false); // Visual indicator for saving
 
   const examDate = new Date(2026, 2, 28);
 
-  // --- Initial Data Generation ---
+  // --- Auth & Data Synchronization ---
   useEffect(() => {
-    const initialTasks = generateDetailedPlan();
-    setTasks(initialTasks);
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    // Listen to Firestore
+    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'planner_data', 'study_plan');
+    const unsubscribe = onSnapshot(docRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setTasks(snapshot.data().tasks);
+      } else {
+        // Initialize for new user
+        const initialTasks = generateDetailedPlan();
+        setDoc(docRef, { tasks: initialTasks });
+        setTasks(initialTasks);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const generateDetailedPlan = () => {
     const plan = {};
@@ -29,8 +68,6 @@ const StudyPlanner = () => {
       let taskIndex = 0;
       for (let d = startDay; d <= endDay; d++) {
         const dateKey = `2026-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        // If we have specific tasks for this day in the list, use them. 
-        // Otherwise repeat generic tasks or distribute them.
         const dailyTasks = taskList[taskIndex % taskList.length];
         
         if (Array.isArray(dailyTasks)) {
@@ -44,12 +81,12 @@ const StudyPlanner = () => {
 
     // --- 1. 취약점 완파: 무역규범 (2/10 ~ 2/15) ---
     const lawsTasks = [
-      ["대외무역법 목적 및 용어 정의 암기", "무역업 고유번호 부여 및 관리 체계 정리", "수출입 실적 인정 범위 확인 (간접수출 포함)"], // 10일
-      ["특정거래형태 종류별 정의 (위탁가공, 중계무역 등)", "외화획득용 원료/기재 수입 제도 이해", "전략물자 수출입 통제 시스템 흐름도 그리기"], // 11일
-      ["원산지 표시 대상 및 판정 기준 암기", "원산지 표시 위반 시 제재 조치 정리", "대외무역법 벌칙 조항 (5년/3년/1년) 구분"], // 12일
-      ["관세법: 관세 부과 4대 요건 (과세물건, 납세의무자 등)", "관세평가 1방법 ~ 6방법 핵심 키워드 정리", "납세 담보 제도 및 기간 암기"], // 13일
-      ["탄력관세 제도 (덤핑방지, 상계, 보복관세 등) 표 정리", "관세 감면 제도 (무조건/조건부) 구분하기", "분할납부 및 월별납부 제도 이해"], // 14일
-      ["관세 환급 특례법: 정액환급 vs 개별환급", "보세구역 종류 (지정/특허/종합) 및 특징", "수입통관 및 보세운송 절차 도식화"], // 15일
+      ["대외무역법 목적 및 용어 정의 암기", "무역업 고유번호 부여 및 관리 체계 정리", "수출입 실적 인정 범위 확인 (간접수출 포함)"], 
+      ["특정거래형태 종류별 정의 (위탁가공, 중계무역 등)", "외화획득용 원료/기재 수입 제도 이해", "전략물자 수출입 통제 시스템 흐름도 그리기"], 
+      ["원산지 표시 대상 및 판정 기준 암기", "원산지 표시 위반 시 제재 조치 정리", "대외무역법 벌칙 조항 (5년/3년/1년) 구분"], 
+      ["관세법: 관세 부과 4대 요건 (과세물건, 납세의무자 등)", "관세평가 1방법 ~ 6방법 핵심 키워드 정리", "납세 담보 제도 및 기간 암기"], 
+      ["탄력관세 제도 (덤핑방지, 상계, 보복관세 등) 표 정리", "관세 감면 제도 (무조건/조건부) 구분하기", "분할납부 및 월별납부 제도 이해"], 
+      ["관세 환급 특례법: 정액환급 vs 개별환급", "보세구역 종류 (지정/특허/종합) 및 특징", "수입통관 및 보세운송 절차 도식화"], 
     ];
     setRangeTasks(10, 15, 2, lawsTasks, 'weakness');
 
@@ -63,10 +100,10 @@ const StudyPlanner = () => {
 
     // --- 3. 취약점 완파: 무역결제/외환 (2/19 ~ 2/22) ---
     const paymentTasks = [
-        ["신용장(L/C) 기본 거래 흐름도 백지에 그리기", "신용장 독립성/추상성 원칙 판례 읽기", "주요 당사자(개설은행, 통지은행 등) 의무 정리"], // 19일
-        ["UCP 600 주요 조항 (제1조~제10조) 정독", "하자 있는 서류의 처리 및 승낙 거절 통지 절차", "양도 가능 신용장 vs 백투백 신용장 비교"], // 20일
-        ["추심결제(D/P, D/A) 차이점 및 리스크 분석", "송금 방식(T/T)과 O/A 방식의 비교", "팩토링 및 포페이팅 금융 기법 이해"], // 21일
-        ["외환 실무: 매도율/매입율 적용 기준 암기", "환율 계산 기출문제 20제 풀기 (오답 필수)", "선물환 거래 및 환리스크 관리 기법 기초"], // 22일
+        ["신용장(L/C) 기본 거래 흐름도 백지에 그리기", "신용장 독립성/추상성 원칙 판례 읽기", "주요 당사자(개설은행, 통지은행 등) 의무 정리"], 
+        ["UCP 600 주요 조항 (제1조~제10조) 정독", "하자 있는 서류의 처리 및 승낙 거절 통지 절차", "양도 가능 신용장 vs 백투백 신용장 비교"], 
+        ["추심결제(D/P, D/A) 차이점 및 리스크 분석", "송금 방식(T/T)과 O/A 방식의 비교", "팩토링 및 포페이팅 금융 기법 이해"], 
+        ["외환 실무: 매도율/매입율 적용 기준 암기", "환율 계산 기출문제 20제 풀기 (오답 필수)", "선물환 거래 및 환리스크 관리 기법 기초"], 
     ];
     setRangeTasks(19, 22, 2, paymentTasks, 'weakness');
 
@@ -100,7 +137,6 @@ const StudyPlanner = () => {
     setRangeTasks(3, 8, 3, practiceTasks, 'practice');
 
     // --- 7. 기출 무한 회독 (3/9 ~ 3/20) ---
-    // 12일간
     const examTasks = [];
     for(let i=1; i<=12; i++) {
         examTasks.push([
@@ -123,7 +159,6 @@ const StudyPlanner = () => {
     ];
     setRangeTasks(21, 27, 3, finalTasks, 'final');
 
-    // D-Day
     addTask('2026-03-28', '시험장 입실 완료 (09:00까지)', 'dday');
     addTask('2026-03-28', '1교시 시험 응시 (09:30 ~ 11:00)', 'dday');
     addTask('2026-03-28', '2교시 시험 응시 (11:20 ~ 12:50)', 'dday');
@@ -132,16 +167,29 @@ const StudyPlanner = () => {
   };
 
   // --- Logic Helpers ---
-  const toggleTask = (dateKey, taskId) => {
-    setTasks(prev => {
-      const newTasks = { ...prev };
-      if (newTasks[dateKey]) {
-        newTasks[dateKey] = newTasks[dateKey].map(t => 
-          t.id === taskId ? { ...t, completed: !t.completed } : t
-        );
-      }
-      return newTasks;
-    });
+  const toggleTask = async (dateKey, taskId) => {
+    if (!user) return;
+    
+    // 1. Optimistic Update
+    const newTasks = { ...tasks };
+    if (newTasks[dateKey]) {
+      newTasks[dateKey] = newTasks[dateKey].map(t => 
+        t.id === taskId ? { ...t, completed: !t.completed } : t
+      );
+    }
+    setTasks(newTasks);
+    setIsSaving(true);
+
+    // 2. Save to Firestore
+    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'planner_data', 'study_plan');
+    try {
+        await setDoc(docRef, { tasks: newTasks }, { merge: true });
+        // Saving indicator logic handled by effect slightly, or just timeout
+        setTimeout(() => setIsSaving(false), 800);
+    } catch (e) {
+        console.error("Save failed", e);
+        setIsSaving(false);
+    }
   };
 
   const getDayStatus = (dateKey) => {
@@ -199,7 +247,6 @@ const StudyPlanner = () => {
         const isSelected = formatDateKey(selectedDate) === dateKey;
         const isToday = formatDateKey(currentDate) === dateKey;
         
-        // Determine Task Type for coloring
         let type = dayTasks.length > 0 ? dayTasks[0].type : 'normal';
         let bgClass = "bg-white";
         let badgeColor = "text-gray-500";
@@ -210,7 +257,6 @@ const StudyPlanner = () => {
         else if (type === 'final') { bgClass = "bg-purple-50/30"; badgeColor = "text-purple-600"; }
         else if (type === 'dday') { bgClass = "bg-yellow-50/50 ring-1 ring-yellow-200"; badgeColor = "text-yellow-700"; }
 
-        // Status Indicator
         const status = getDayStatus(dateKey);
         let statusIcon = null;
         if (dayTasks.length > 0) {
@@ -255,15 +301,12 @@ const StudyPlanner = () => {
     return calendarDays;
   };
 
-  // --- Views ---
-
   const CalendarView = () => {
     const selectedDateKey = formatDateKey(selectedDate);
     const dayTasks = tasks[selectedDateKey] || [];
 
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
-        {/* Left: Calendar Grid */}
         <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="p-4 flex justify-between items-center border-b border-gray-100">
             <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2">
@@ -289,7 +332,6 @@ const StudyPlanner = () => {
           </div>
         </div>
 
-        {/* Right: Todo List */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col h-full">
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -350,7 +392,6 @@ const StudyPlanner = () => {
     const completedTasks = allTasks.filter(t => t.completed);
     const incompleteTasks = allTasks.filter(t => !t.completed);
     
-    // Sort incomplete tasks: Overdue (Before Today), Today, Upcoming
     const todayStr = formatDateKey(currentDate);
     
     const overdue = incompleteTasks.filter(t => t.date < todayStr);
@@ -359,7 +400,6 @@ const StudyPlanner = () => {
 
     return (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
-            {/* Summary Cards */}
             <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
                     <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
@@ -391,7 +431,6 @@ const StudyPlanner = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Incomplete Column */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div className="p-4 bg-red-50 border-b border-red-100 flex justify-between items-center">
                         <h3 className="font-bold text-red-800 flex items-center gap-2">
@@ -448,7 +487,6 @@ const StudyPlanner = () => {
                     </div>
                 </div>
 
-                {/* Completed Column */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div className="p-4 bg-green-50 border-b border-green-100 flex justify-between items-center">
                         <h3 className="font-bold text-green-800 flex items-center gap-2">
@@ -490,7 +528,6 @@ const StudyPlanner = () => {
 
   return (
     <div className="max-w-5xl mx-auto p-4 bg-gray-50 min-h-screen font-sans text-slate-800">
-      {/* Header */}
       <div className="bg-white rounded-2xl shadow-sm p-6 mb-6">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
@@ -498,7 +535,14 @@ const StudyPlanner = () => {
               <Award className="text-indigo-600" />
               국제무역사 1급 합격 플래너
             </h1>
-            <p className="text-gray-500 mt-1 ml-8">목표 시험일: 2026년 3월 28일</p>
+            <p className="text-gray-500 mt-1 ml-8 flex items-center gap-2">
+              목표 시험일: 2026년 3월 28일
+              {isSaving && (
+                 <span className="text-xs text-green-600 flex items-center gap-1 animate-pulse font-medium bg-green-50 px-2 py-0.5 rounded-full">
+                    <Cloud className="w-3 h-3" /> 저장 중...
+                 </span>
+              )}
+            </p>
           </div>
           <div className="flex items-center gap-3">
              <div className="bg-red-50 px-5 py-2 rounded-xl text-center ring-2 ring-red-100">
@@ -508,7 +552,6 @@ const StudyPlanner = () => {
           </div>
         </div>
 
-        {/* Tab Navigation */}
         <div className="flex gap-4 mt-8 border-b border-gray-100">
             <button 
                 onClick={() => setActiveTab('calendar')}
